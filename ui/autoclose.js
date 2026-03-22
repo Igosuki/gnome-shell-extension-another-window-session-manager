@@ -575,7 +575,7 @@ const RunningApplicationListWindow = GObject.registerClass({
 
             this._applicationSection.title = `Waiting below processes to exit, this may take a while…`;
             this._log.info(`Waiting processes to exit`);
-            this._checkProcessStateId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, () => {
+            this._checkProcessStateId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
                 this.updateRunningPids();
                 const pidStateMap = this._checkRunningPidState();
                 if (this._pidsMap.size) {

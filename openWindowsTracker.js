@@ -82,7 +82,8 @@ export const OpenWindowsTracker = class {
         this._restoringSession = false;
         this._runningSaveCancelableMap = new Map();
         this._windowsAboutToSaveSet = new Set();
-        this._saveWindowSessionPeriodically();
+        this._connectedWindows = new Set();
+        this._saveSessionByBatchTimeoutId = null;
 
         this._confirmedLogoutId = 0;
         this._confirmedRebootId = 0;
@@ -204,6 +205,7 @@ export const OpenWindowsTracker = class {
             e.signals.forEach(signal => {
                 const id = e.instance.connect(signal, () => {
                     this._summaryAboutToSave = true;
+                    this._scheduleSave();
                 });
                 this._signals.push([id, e.instance]);
             });
@@ -250,12 +252,20 @@ export const OpenWindowsTracker = class {
     }
 
     _connectWindowSignalsToSaveSession(window) {
+        if (this._connectedWindows.has(window)) return;
+        this._connectedWindows.add(window);
+
         this._windowInterestingSignalsWhileSave.forEach(signal => {
             const windowSignalId = window.connect(signal, () => {
                 this._prepareToSaveWindowSession(window);
             });
             this._signals.push([windowSignalId, window]);
-        })
+        });
+
+        const unmanagingId = window.connect('unmanaging', () => {
+            this._connectedWindows.delete(window);
+        });
+        this._signals.push([unmanagingId, window]);
     }
 
     _restoreWindowState(window) {
@@ -310,14 +320,17 @@ export const OpenWindowsTracker = class {
 
             // this._log.debug(`Adding window ${window.get_title()} to queue (current size: ${this._windowsAboutToSaveSet.size}) to prepare to save window session`);
             this._windowsAboutToSaveSet.add(window);
+            this._scheduleSave();
         } catch (error) {
             this._log.error(error);
         }
     }
 
-    _saveWindowSessionPeriodically() {
-        // TODO Add an option: save session config delay
+    _scheduleSave() {
+        if (this._saveSessionByBatchTimeoutId) return;
         this._saveSessionByBatchTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+            this._saveSessionByBatchTimeoutId = null;
+
             if (this._summaryAboutToSave) {
                 this._saveSummary().then(() => {
                     this._summaryAboutToSave = false;
@@ -336,7 +349,7 @@ export const OpenWindowsTracker = class {
                     const cancellable = new Gio.Cancellable();
                     this._runningSaveCancelableMap.set(window, cancellable);
                 });
-                
+
                 this._saveSession.saveWindowsSessionAsync(
                     windows,
                     this._runningSaveCancelableMap
@@ -354,7 +367,7 @@ export const OpenWindowsTracker = class {
                     }
                 });
             }
-            return GLib.SOURCE_CONTINUE;
+            return GLib.SOURCE_REMOVE;
         });
     }
 
@@ -619,8 +632,9 @@ export const OpenWindowsTracker = class {
         }
         if (this._saveSessionByBatchTimeoutId) {
             GLib.Source.remove(this._saveSessionByBatchTimeoutId);
-            this._saveSessionByBatchTimeoutId = 0;
+            this._saveSessionByBatchTimeoutId = null;
         }
+        this._connectedWindows?.clear();
 
         if (_meta_restart) {
             Meta.restart = _meta_restart;
